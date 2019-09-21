@@ -13,6 +13,8 @@ PROCESSED_DIR = os.path.join(PROJECT_DIR, "processed_data")
 PROCESSED_TRAIN_DIR = os.path.join(PROCESSED_DIR, "train")
 PATH_DIR = os.path.join(PROJECT_DIR, 'path_detail_data')
 PATH_TRAIN_DIR = os.path.join(PATH_DIR, 'train')
+FULL_PATH_DIR = os.path.join(PROJECT_DIR, "full_path_data")
+FULL_PATH_TRAIN_DIR = os.path.join(FULL_PATH_DIR, "train")
 
 TRAIN_CONFIG = {
     'xmin': 382930,
@@ -298,23 +300,25 @@ def fillMissingValue(dir):
 
     count = 0
     total = TRAIN_CONFIG['trainset']
+    mkdirs(FULL_PATH_TRAIN_DIR)
 
     for csv in walkDataset(dir):
         df, station = loadMap(csv)
 
-        vac = df["bin0"].isnull().sum()
-        ptot = len(df)
+        target_file = os.path.join(FULL_PATH_TRAIN_DIR, f"cell_full_path_{station.cellIndex}.csv")
+        if os.path.exists(target_file):
+            count += 1
+            continue
+
+        mask = df["bin0"].isnull()
+        vac = mask.sum()
+        vcount = 0
 
         d = df[["X", "Y"]].to_dict('records')
         lookup = {(m["X"], m["Y"]): i for i, m in enumerate(d)}
-        marked = set(k for k, i in lookup.items() if not np.isnan(df.loc[i, "bin0"]))
+        marked = set(k for k, i in lookup.items() if not mask[i])
 
-        wait_list = df[df["bin0"] == np.nan]
-
-        xmin = df["X"].min()
-        xmax = df["X"].max()
-        ymin = df["Y"].min()
-        ymax = df["Y"].max()
+        wait_list = df[df["bin0"].isna()]
 
         for _, row in wait_list.iterrows():
             x = row["X"]
@@ -322,15 +326,16 @@ def fillMissingValue(dir):
             if (x, y) in marked:
                 continue
 
-            ra = math.atan2(x - station.x, y - station.y) + math.pi
-            a = math.degrees(ra)
+            a = math.degrees(math.atan2(x - station.x, y - station.y) + 2*math.pi)
+            a = a - 360 if a >= 360 else a
 
-            xlist, ylist = getPath(a, xmin, xmax, ymin, ymax, station.x, station.y)
+            xlist, ylist = getPath(a, x, x, y, y, station.x, station.y)
 
             ref_alt = station.altitude
             station_h = station.height
             waypoints_h = []
             waypoints_d = []
+            prevx, prevy = None, None
             for x, y in zip(xlist, ylist):
                 if (x, y) not in lookup:
                     continue
@@ -339,10 +344,12 @@ def fillMissingValue(dir):
                 r = df.loc[i, :]
 
                 if (x, y) in marked:
-                    waypoints_h = list(map(int, r["path_h"].split()))
-                    waypoints_d = list(map(int, r["path_d"].split()))
-
+                    prevx, prevy = x, y
                     continue
+
+                if prevx is not None:
+                    waypoints_h = list(map(int, df.loc[lookup[(prevx, prevy)], "path_h"].split()))
+                    waypoints_d = list(map(int, df.loc[lookup[(prevx, prevy)], "path_d"].split()))
 
                 vdeg = r["Vertical Degree"]
                 alt = r["Altitude"]
@@ -359,11 +366,12 @@ def fillMissingValue(dir):
 
                 marked.add((x, y))
 
-                vac += 1
-                print(f"Vacancy filled: {vac}/{ptot} | {count}/{total}")
+                vcount += 1
+                print(f"Vacancy filled: {vcount}/{vac} | {count}/{total}")
 
+        df.to_csv(target_file)
         count += 1
 
 
 if __name__ == "__main__":
-    aggregatePath()
+    fillMissingValue(PATH_TRAIN_DIR)
