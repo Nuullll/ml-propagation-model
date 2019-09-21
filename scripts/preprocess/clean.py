@@ -159,6 +159,7 @@ def aggregate(dir):
         df["Station Total Downtilt"] = df["Electrical Downtilt"] + df["Mechanical Downtilt"]
         df["Station Downtilt Delta"] = df["Electrical Downtilt"] - df["Mechanical Downtilt"]
         df["Vertical Degree"] = np.degrees(np.arctan2(-df["Height Delta"], df["Distance To Station"]))
+        df["Vertical Degree Delta"] = df["Vertical Degree"] - df["Station Total Downtilt"]
 
         df.to_csv(os.path.join(PROCESSED_DIR, f"cell_agg_{station.cellIndex}.csv"))
 
@@ -297,7 +298,6 @@ def fillMissingValue(dir):
 
     count = 0
     total = TRAIN_CONFIG['trainset']
-    step = TRAIN_CONFIG['step']
 
     for csv in walkDataset(dir):
         df, station = loadMap(csv)
@@ -316,56 +316,53 @@ def fillMissingValue(dir):
         ymin = df["Y"].min()
         ymax = df["Y"].max()
 
-        for i, row in wait_list.iterrows():
+        for _, row in wait_list.iterrows():
             x = row["X"]
             y = row["Y"]
             if (x, y) in marked:
                 continue
 
-            xstep = step
-            ystep = step
-
             ra = math.atan2(x - station.x, y - station.y) + math.pi
             a = math.degrees(ra)
 
-            if a <= 90:
-                xend = xmax
-                yend = ymax
-            elif a <= 180:
-                xend = xmax
-                yend = ymin
-                ystep = -step
-            elif a <= 270:
-                xend = xmin
-                yend = ymin
-                xstep = -step
-                ystep = -step
-            else:
-                xend = xmin
-                yend = ymax
-                xstep = -step
+            xlist, ylist = getPath(a, xmin, xmax, ymin, ymax, station.x, station.y)
 
-            if a % 180 == 0:
-                ylist = np.arange(station.y, yend + ystep, ystep)
-                xlist = [station.x for _ in ylist]
-            elif a % 90 == 0:
-                xlist = np.arange(station.x, xend + xstep, xstep)
-                ylist = [station.y for _ in xlist]
-            else:
-                xlist1 = np.arange(station.x, xend + xstep, xstep)
-                ylist1 = np.floor(((xlist1 - station.x) / math.tan(ra) + station.y) / 5) * 5
-                ylist2 = np.arange(station.y, yend + ystep, ystep)
-                xlist2 = np.floor((ylist2 - station.y) * math.tan(ra) + station.x / 5) * 5
-
-                xlist = list(xlist1) + list(xlist2)
-                ylist = list(ylist1) + list(ylist2)
-
-                zip_list = list(set(zip(xlist, ylist)))
-                zip_list.sort(key=lambda x: (x[0] - station.x) ** 2 + (x[1] - station.y) ** 2)
-
-                if len(zip_list) == 0:
+            ref_alt = station.altitude
+            station_h = station.height
+            waypoints_h = []
+            waypoints_d = []
+            for x, y in zip(xlist, ylist):
+                if (x, y) not in lookup:
                     continue
-                xlist, ylist = zip(*zip_list)
+
+                i = lookup[(x, y)]
+                r = df.loc[i, :]
+
+                if (x, y) in marked:
+                    waypoints_h = list(map(int, r["path_h"].split()))
+                    waypoints_d = list(map(int, r["path_d"].split()))
+
+                    continue
+
+                vdeg = r["Vertical Degree"]
+                alt = r["Altitude"]
+                ref_h = station_h + ref_alt - alt
+                waypoints_h.append(max(CLUTTER_HEIGHT[int(r["Clutter Index"])], r["Building Height"]) + alt)
+                waypoints_d.append(distance(x, y, station.x, station.y))
+
+                bins = binShot(waypoints_h, waypoints_d, ref_h, vdeg, alt)
+                for k, v in bins.items():
+                    df.loc[i, f"bin{k}"] = v
+
+                df.loc[i, "path_h"] = " ".join(map(str, map(int, waypoints_h)))
+                df.loc[i, "path_d"] = " ".join(map(str, map(int, waypoints_d)))
+
+                marked.add((x, y))
+
+                vac += 1
+                print(f"Vacancy filled: {vac}/{ptot} | {count}/{total}")
+
+        count += 1
 
 
 if __name__ == "__main__":
