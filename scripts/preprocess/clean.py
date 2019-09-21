@@ -168,6 +168,11 @@ def aggregatePath():
     for csv in walkDataset(PROCESSED_TRAIN_DIR):
         df, station = loadMap(csv)
 
+        target_file = os.path.join(PATH_TRAIN_DIR, f"cell_path_agg_{station.cellIndex}.csv")
+        if os.path.exists(target_file):
+            count += 1
+            continue
+
         d = df[["X", "Y"]].to_dict('records')
         lookup = {(m["X"], m["Y"]): i for i, m in enumerate(d)}
         marked = set()
@@ -246,7 +251,7 @@ def aggregatePath():
 
             print(f"Scanning degree: {a} | {count}/{total}")
 
-        df.to_csv(os.path.join(PATH_TRAIN_DIR, f"cell_path_agg_{station.cellIndex}.csv"))
+        df.to_csv(target_file)
         count += 1
 
 
