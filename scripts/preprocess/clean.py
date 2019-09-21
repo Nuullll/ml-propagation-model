@@ -11,7 +11,7 @@ TEST_DIR = os.path.join(DATASET_DIR, "test_set")
 VISUAL_DIR = os.path.join(PROJECT_DIR, "visualization")
 PROCESSED_DIR = os.path.join(PROJECT_DIR, "processed_data")
 PROCESSED_TRAIN_DIR = os.path.join(PROCESSED_DIR, "train")
-PATH_DIR = os.path.join(PROJECT_DIR, 'path_data')
+PATH_DIR = os.path.join(PROJECT_DIR, 'path_detail_data')
 PATH_TRAIN_DIR = os.path.join(PATH_DIR, 'train')
 
 TRAIN_CONFIG = {
@@ -36,6 +36,13 @@ CLUTTER_HEIGHT = {
     16: 30, 17: 5, 18: 10,
     19: 4, 20: 80
 }
+
+
+def mkdirs(dir):
+    try:
+        os.makedirs(dir)
+    except FileExistsError as _:
+        pass
 
 
 class Antenna:
@@ -164,6 +171,7 @@ def aggregatePath():
     count = 0
     total = TRAIN_CONFIG['trainset']
     step = TRAIN_CONFIG['step']
+    mkdirs(PATH_TRAIN_DIR)
 
     for csv in walkDataset(PROCESSED_TRAIN_DIR):
         df, station = loadMap(csv)
@@ -222,6 +230,8 @@ def aggregatePath():
                 zip_list = list(set(zip(xlist, ylist)))
                 zip_list.sort(key=lambda x: (x[0]-station.x)**2 + (x[1]-station.y)**2)
 
+                if len(zip_list) == 0:
+                    continue
                 xlist, ylist = zip(*zip_list)
 
             ref_alt = station.altitude
@@ -247,6 +257,9 @@ def aggregatePath():
                 for k, v in bins.items():
                     df.loc[i, f"bin{k}"] = v
 
+                df.loc[i, "path_h"] = " ".join(map(str, waypoints_h))
+                df.loc[i, "path_d"] = " ".join(map(str, waypoints_d))
+
                 marked.add((x, y))
 
             print(f"Scanning degree: {a} | {count}/{total}")
@@ -270,6 +283,22 @@ def binShot(hs, ds, ref_h, vdeg, alt):
 
 def distance(x1, y1, x2, y2):
     return math.sqrt((x1-x2)**2 + (y1-y2)**2)
+
+
+def fillMissingValue(dir):
+
+    count = 0
+    total = TRAIN_CONFIG['trainset']
+
+    for csv in walkDataset(dir):
+        df, station = loadMap(csv)
+
+        vac = df["bin0"].isnull().sum()
+        ptot = len(df)
+
+        d = df[["X", "Y"]].to_dict('records')
+        lookup = {(m["X"], m["Y"]): i for i, m in enumerate(d)}
+        marked = set(k for k, i in lookup.items() if not np.isnan(df.loc[i, "bin0"]))
 
 
 if __name__ == "__main__":
