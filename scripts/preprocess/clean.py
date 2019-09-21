@@ -154,7 +154,7 @@ def aggregate(dir):
         df["Y Distance"] = df["Y"] - df["Cell Y"]
         df["Distance To Station"] = (df["X Distance"].pow(2) + df["Y Distance"].pow(2)).pow(1./2)
         df["Altitude Delta"] = df["Altitude"] - df["Cell Altitude"]
-        df["Azimuth To Station"] = np.degrees(np.arctan2(df["Y Distance"], df["X Distance"])) + 180 - df["Azimuth"]
+        df["Azimuth To Station"] = (np.degrees(np.arctan2(df["X Distance"], df["Y Distance"])) + 360) % 360 - df["Azimuth"]
         df["Height Delta"] = df["Altitude"] - df["Station Absolute Height"]
         df["Station Total Downtilt"] = df["Electrical Downtilt"] + df["Mechanical Downtilt"]
         df["Station Downtilt Delta"] = df["Electrical Downtilt"] - df["Mechanical Downtilt"]
@@ -166,11 +166,60 @@ def aggregate(dir):
         print(f"Task ok: {count}/{total}")
 
 
+def getPath(a, xmin, xmax, ymin, ymax, xs, ys):
+    step = TRAIN_CONFIG['step']
+
+    ra = math.radians(a)
+
+    xstep = step
+    ystep = step
+    if a <= 90:
+        xend = xmax
+        yend = ymax
+    elif a <= 180:
+        xend = xmax
+        yend = ymin
+        ystep = -step
+    elif a <= 270:
+        xend = xmin
+        yend = ymin
+        xstep = -step
+        ystep = -step
+    else:
+        xend = xmin
+        yend = ymax
+        xstep = -step
+
+    if a % 180 == 0:
+        ylist = np.arange(ys, yend + ystep, ystep)
+        xlist = [xs for _ in ylist]
+    elif a % 90 == 0:
+        xlist = np.arange(xs, xend + xstep, xstep)
+        ylist = [ys for _ in xlist]
+    else:
+        xlist1 = np.arange(xs, xend + xstep, xstep)
+        ylist1 = np.floor(((xlist1 - xs) / math.tan(ra) + ys) / 5) * 5
+        ylist2 = np.arange(ys, yend + ystep, ystep)
+        xlist2 = np.floor(((ylist2 - ys) * math.tan(ra) + xs) / 5) * 5
+
+        xlist = list(xlist1) + list(xlist2)
+        ylist = list(ylist1) + list(ylist2)
+
+        zip_list = list(set(zip(xlist, ylist)))
+        zip_list.sort(key=lambda x: (x[0] - xs) ** 2 + (x[1] - ys) ** 2)
+
+        if len(zip_list) == 0:
+            return [], []
+
+        xlist, ylist = zip(*zip_list)
+
+    return xlist, ylist
+
+
 def aggregatePath():
 
     count = 0
     total = TRAIN_CONFIG['trainset']
-    step = TRAIN_CONFIG['step']
     mkdirs(PATH_TRAIN_DIR)
 
     for csv in walkDataset(PROCESSED_TRAIN_DIR):
@@ -190,49 +239,8 @@ def aggregatePath():
         ymin = df["Y"].min()
         ymax = df["Y"].max()
 
-        xstep = step
-        ystep = step
         for a in range(0, 360, 3):
-            ra = math.radians(a)
-
-            if a <= 90:
-                xend = xmax
-                yend = ymax
-            elif a <= 180:
-                xend = xmax
-                yend = ymin
-                ystep = -step
-            elif a <= 270:
-                xend = xmin
-                yend = ymin
-                xstep = -step
-                ystep = -step
-            else:
-                xend = xmin
-                yend = ymax
-                xstep = -step
-
-            if a % 180 == 0:
-                ylist = np.arange(station.y, yend+ystep, ystep)
-                xlist = [station.x for _ in ylist]
-            elif a % 90 == 0:
-                xlist = np.arange(station.x, xend+xstep, xstep)
-                ylist = [station.y for _ in xlist]
-            else:
-                xlist1 = np.arange(station.x, xend+xstep, xstep)
-                ylist1 = np.floor(((xlist1-station.x) / math.tan(ra) + station.y) / 5) * 5
-                ylist2 = np.arange(station.y, yend+ystep, ystep)
-                xlist2 = np.floor((ylist2-station.y) * math.tan(ra) + station.x / 5) * 5
-
-                xlist = list(xlist1) + list(xlist2)
-                ylist = list(ylist1) + list(ylist2)
-
-                zip_list = list(set(zip(xlist, ylist)))
-                zip_list.sort(key=lambda x: (x[0]-station.x)**2 + (x[1]-station.y)**2)
-
-                if len(zip_list) == 0:
-                    continue
-                xlist, ylist = zip(*zip_list)
+            xlist, ylist = getPath(a, xmin, xmax, ymin, ymax, station.x, station.y)
 
             ref_alt = station.altitude
             station_h = station.height
@@ -257,8 +265,8 @@ def aggregatePath():
                 for k, v in bins.items():
                     df.loc[i, f"bin{k}"] = v
 
-                df.loc[i, "path_h"] = " ".join(map(str, waypoints_h))
-                df.loc[i, "path_d"] = " ".join(map(str, waypoints_d))
+                df.loc[i, "path_h"] = " ".join(map(str, map(int, waypoints_h)))
+                df.loc[i, "path_d"] = " ".join(map(str, map(int, waypoints_d)))
 
                 marked.add((x, y))
 
@@ -289,6 +297,7 @@ def fillMissingValue(dir):
 
     count = 0
     total = TRAIN_CONFIG['trainset']
+    step = TRAIN_CONFIG['step']
 
     for csv in walkDataset(dir):
         df, station = loadMap(csv)
@@ -299,6 +308,64 @@ def fillMissingValue(dir):
         d = df[["X", "Y"]].to_dict('records')
         lookup = {(m["X"], m["Y"]): i for i, m in enumerate(d)}
         marked = set(k for k, i in lookup.items() if not np.isnan(df.loc[i, "bin0"]))
+
+        wait_list = df[df["bin0"] == np.nan]
+
+        xmin = df["X"].min()
+        xmax = df["X"].max()
+        ymin = df["Y"].min()
+        ymax = df["Y"].max()
+
+        for i, row in wait_list.iterrows():
+            x = row["X"]
+            y = row["Y"]
+            if (x, y) in marked:
+                continue
+
+            xstep = step
+            ystep = step
+
+            ra = math.atan2(x - station.x, y - station.y) + math.pi
+            a = math.degrees(ra)
+
+            if a <= 90:
+                xend = xmax
+                yend = ymax
+            elif a <= 180:
+                xend = xmax
+                yend = ymin
+                ystep = -step
+            elif a <= 270:
+                xend = xmin
+                yend = ymin
+                xstep = -step
+                ystep = -step
+            else:
+                xend = xmin
+                yend = ymax
+                xstep = -step
+
+            if a % 180 == 0:
+                ylist = np.arange(station.y, yend + ystep, ystep)
+                xlist = [station.x for _ in ylist]
+            elif a % 90 == 0:
+                xlist = np.arange(station.x, xend + xstep, xstep)
+                ylist = [station.y for _ in xlist]
+            else:
+                xlist1 = np.arange(station.x, xend + xstep, xstep)
+                ylist1 = np.floor(((xlist1 - station.x) / math.tan(ra) + station.y) / 5) * 5
+                ylist2 = np.arange(station.y, yend + ystep, ystep)
+                xlist2 = np.floor((ylist2 - station.y) * math.tan(ra) + station.x / 5) * 5
+
+                xlist = list(xlist1) + list(xlist2)
+                ylist = list(ylist1) + list(ylist2)
+
+                zip_list = list(set(zip(xlist, ylist)))
+                zip_list.sort(key=lambda x: (x[0] - station.x) ** 2 + (x[1] - station.y) ** 2)
+
+                if len(zip_list) == 0:
+                    continue
+                xlist, ylist = zip(*zip_list)
 
 
 if __name__ == "__main__":
