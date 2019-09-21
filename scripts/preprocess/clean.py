@@ -124,6 +124,8 @@ def walkDataset(dataset_dir):
 
     for root, _, files in os.walk(dataset_dir):
 
+        files.sort()
+
         for file in files:
             fullname = os.path.join(root, file)
             _, ext = os.path.splitext(fullname)
