@@ -6,7 +6,6 @@ sys.path.append(PACKAGE_DIR)
 from model_service.tfserving_model_service import TfServingBaseService
 from preprocess import Aggregator
 from sklearn.externals import joblib
-import os
 from lgbmodel import LGBModel
 
 
