@@ -15,6 +15,8 @@ PATH_DIR = os.path.join(PROJECT_DIR, 'path_detail_data')
 PATH_TRAIN_DIR = os.path.join(PATH_DIR, 'train')
 FULL_PATH_DIR = os.path.join(PROJECT_DIR, "full_path_data")
 FULL_PATH_TRAIN_DIR = os.path.join(FULL_PATH_DIR, "train")
+COMPRESS_DIR = os.path.join(PROJECT_DIR, "compress_data")
+COMPRESS_TRAIN_DIR = os.path.join(COMPRESS_DIR, "train")
 
 TRAIN_CONFIG = {
     'xmin': 382930,
@@ -373,5 +375,32 @@ def fillMissingValue(dir):
         count += 1
 
 
+def clean(dir):
+    count = 0
+    total = TRAIN_CONFIG['trainset']
+    mkdirs(COMPRESS_TRAIN_DIR)
+
+    for csv in walkDataset(dir):
+        df, station = loadMap(csv)
+
+        target_file = os.path.join(COMPRESS_TRAIN_DIR, f"compress_{station.cellIndex}.csv")
+        if os.path.exists(target_file):
+            count += 1
+            continue
+
+        df["Vertical Degree Delta"] = df["Vertical Degree"] - df["Station Total Downtilt"]
+
+        cols = ['Unnamed: 0', 'Unnamed: 0.1', 'Unnamed: 0.1.1', 'X Distance', 'Y Distance', 'path_h', 'path_d']
+        try:
+            df = df.drop(cols, axis=1)
+        except Exception as e:
+            pass
+
+        df.to_csv(target_file)
+
+        count += 1
+        print(f"OK: {count}/{total}")
+
+
 if __name__ == "__main__":
-    fillMissingValue(PATH_TRAIN_DIR)
+    clean(FULL_PATH_TRAIN_DIR)

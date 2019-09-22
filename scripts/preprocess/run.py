@@ -6,6 +6,7 @@ import math
 import pymongo
 from pymongo.collection import ReturnDocument
 
+R2D = 180 / math.pi
 
 PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
 DATASET_DIR = os.path.join(PROJECT_DIR, "dataset")
@@ -21,18 +22,33 @@ TRAIN_CONFIG = {
     'step': 5,
 
     'trainset': 4000,
+    'points': 12011833,
+}
+
+CLUTTER_HEIGHT = {
+    1: 0, 2: 0, 3: 0,
+    4: 3, 5: 5, 6: 1,
+    7: 1, 8: 1, 9: 3,
+    10: 80, 11: 50, 12: 30,
+    13: 20, 14: 10, 15: 10,
+    16: 30, 17: 5, 18: 10,
+    19: 4, 20: 80
 }
 
 client = pymongo.MongoClient()
 
 db = client.propagtion_map
-stations = db.stations
+stations = db.stations_combine
 points = db.points
-antennas = db.antennas
+points_agg = db.points_agg
+# antennas = db.antennas
+points_full = db.points_full
+points_small = db.points_small
 
-stations.create_index([("x", pymongo.ASCENDING), ("y", pymongo.ASCENDING)], unique=True)
-points.create_index([("x", pymongo.ASCENDING), ("y", pymongo.ASCENDING)], unique=True)
-antennas.create_index([("x", pymongo.ASCENDING), ("y", pymongo.ASCENDING), ("azimuth", pymongo.ASCENDING)], unique=True)
+# stations.create_index([("x", pymongo.ASCENDING), ("y", pymongo.ASCENDING), ("cellIndex", pymongo.ASCENDING),
+#                        ("azimuth", pymongo.ASCENDING)], unique=True)
+# points_full.create_index([("X", pymongo.ASCENDING), ("Y", pymongo.ASCENDING), ("Cell Index", pymongo.ASCENDING)], unique=True)
+# antennas.create_index([("x", pymongo.ASCENDING), ("y", pymongo.ASCENDING), ("azimuth", pymongo.ASCENDING)], unique=True)
 
 
 # class MapTile:
@@ -88,14 +104,14 @@ antennas.create_index([("x", pymongo.ASCENDING), ("y", pymongo.ASCENDING), ("azi
 #             self.details[(point.x, point.y)] = point
 
 
-class Point:
-    def __init__(self, x, y, altitude, buildingHeight, clutter, RSRP):
-        self.x = x
-        self.y = y
-        self.altitude = altitude
-        self.buildingHeight = buildingHeight
-        self.clutter = clutter
-        self.RSRP = RSRP
+# class Point:
+#     def __init__(self, x, y, altitude, buildingHeight, clutter, RSRP):
+#         self.x = x
+#         self.y = y
+#         self.altitude = altitude
+#         self.buildingHeight = buildingHeight
+#         self.clutter = clutter
+#         self.RSRP = RSRP
 
 
 class Antenna:
@@ -256,43 +272,73 @@ def walkDataset(dataset_dir):
 #         count += 1
 
 
-def saveStations():
+# def saveStations():
+#     count = 0
+#     for csv in walkDataset(TRAIN_DIR):
+#         df, station = loadMap(csv)
+#
+#         a = antennas.find_one_and_update(
+#             {
+#                 "x": station.x,
+#                 "y": station.y,
+#                 "azimuth": station.antenna.azimuth
+#             },
+#             {
+#                 "$set": {
+#                     "eDowntilt": station.antenna.eDowntilt,
+#                     "mDowntilt": station.antenna.mDowntilt,
+#                     "freq": station.antenna.freq,
+#                     "power": station.antenna.power,
+#                 }
+#             }, upsert=True, return_document=ReturnDocument.AFTER
+#         )
+#
+#         stations.find_one_and_update(
+#             {
+#                 "x": station.x,
+#                 "y": station.y,
+#             },
+#             {
+#                 "$set": {
+#                     "cellIndex": station.cellIndex,
+#                     "height": station.height,
+#                     "buildingHeight": station.buildingHeight,
+#                     "altitude": station.altitude,
+#                     "clutterIndex": station.clutter,
+#                 },
+#                 "$push": {
+#                     "antennas": a["_id"]
+#                 }
+#             }, upsert=True, return_document=ReturnDocument.AFTER
+#         )
+#
+#         count += 1
+#         print(f"Stations saved: {count}/{TRAIN_CONFIG['trainset']}")
+
+
+def saveStationsCombine():
     count = 0
     for csv in walkDataset(TRAIN_DIR):
         df, station = loadMap(csv)
-
-        a = antennas.find_one_and_update(
-            {
-                "x": station.x,
-                "y": station.y,
-                "azimuth": station.antenna.azimuth
-            },
-            {
-                "$set": {
-                    "eDowntilt": station.antenna.eDowntilt,
-                    "mDowntilt": station.antenna.mDowntilt,
-                    "freq": station.antenna.freq,
-                    "power": station.antenna.power,
-                }
-            }, upsert=True, return_document=ReturnDocument.AFTER
-        )
 
         stations.find_one_and_update(
             {
                 "x": station.x,
                 "y": station.y,
+                "cellIndex": station.cellIndex,
+                "azimuth": station.antenna.azimuth,
             },
             {
                 "$set": {
-                    "cellIndex": station.cellIndex,
                     "height": station.height,
                     "buildingHeight": station.buildingHeight,
                     "altitude": station.altitude,
                     "clutterIndex": station.clutter,
+                    "eDowntilt": station.antenna.eDowntilt,
+                    "mDowntilt": station.antenna.mDowntilt,
+                    "freq": station.antenna.freq,
+                    "power": station.antenna.power,
                 },
-                "$push": {
-                    "antennas": a["_id"]
-                }
             }, upsert=True, return_document=ReturnDocument.AFTER
         )
 
@@ -306,32 +352,33 @@ def savePoints():
 
     for csv in walkDataset(TRAIN_DIR):
         df, station = loadMap(csv)
-        details = df.loc[:, ['X', 'Y', 'Altitude', 'Building Height', 'Clutter Index', 'RSRP']]
+        details = df.loc[:, ['Cell Index', 'X', 'Y', 'Altitude', 'Building Height', 'Clutter Index', 'RSRP']]
+        details = details.rename(columns={
+            'Cell Index': 'cellIndex',
+            'X': 'x', 'Y': 'y',
+            'Altitude': 'altitude', 'Building Height': 'buildingHeight',
+            'Clutter Index': 'clutterIndex'
+        })
 
-        rowCount = 0
-        rowTotal = len(details)
-        for _, row in details.sort_values(['X', 'Y']).iterrows():
-            p = Point(row['X'], row['Y'], row['Altitude'], row['Building Height'], row['Clutter Index'], row['RSRP'])
-
-            points.find_one_and_update(
-                {
-                    "x": p.x,
-                    "y": p.y,
-                },
-                {
-                    "$set": {
-                        "altitude": p.altitude,
-                        "buildingHeight": p.buildingHeight,
-                        "clutterIndex": p.clutter,
-                        "RSRP": p.RSRP,
-                    }
-                }, upsert=True, return_document=ReturnDocument.AFTER
-            )
-
-            rowCount += 1
-            print(f"Points saved: {rowCount}/{rowTotal} | {cellCount}/{cellTotal}")
+        p_list = details.to_dict('records')
+        points.insert_many(p_list)
 
         cellCount += 1
+        print(f"Points saved: {cellCount}/{cellTotal}")
+
+
+def savePointsFull():
+    cellCount = 0
+    cellTotal = TRAIN_CONFIG['trainset']
+
+    for csv in walkDataset(TRAIN_DIR):
+        df, station = loadMap(csv)
+
+        p_list = df.to_dict('records')
+        points_full.insert_many(p_list, ordered=False)
+
+        cellCount += 1
+        print(f"Points saved: {cellCount}/{cellTotal}")
 
 
 def hugeMap():
@@ -364,27 +411,240 @@ def aggregateStations():
     ])
 
 
-def aggregateAntennas():
-    antennas.aggregate([
+# def aggregateAntennas():
+#     antennas.aggregate([
+#         {
+#             "$addFields": {
+#                 "downtilt": {
+#                     "$add": ["$eDowntilt", "$mDowntilt"]
+#                 },
+#                 "downtiltDelta": {
+#                     "$subtract": ["$eDowntilt", "$mDowntilt"]
+#                 }
+#             }
+#         },
+#         {
+#             "$out": "antennas"
+#         }
+#     ])
+
+
+def aggregatePoints():
+    points_agg_new = db.points_agg_new
+    points_agg_new.aggregate([
         {
             "$addFields": {
-                "downtilt": {
-                    "$add": ["$eDowntilt", "$mDowntilt"]
+                "Station Absolute Height": {
+                    "$add": ["$Height", "$Cell Altitude"]
                 },
-                "downtiltDelta": {
-                    "$subtract": ["$eDowntilt", "$mDowntilt"]
-                }
+
+                "X Distance": {
+                    "$subtract": ["$X", "$Cell X"]
+                },
+                "Y Distance": {
+                    "$subtract": ["$Y", "$Cell Y"]
+                },
+
+                "Distance To Station": {
+                    "$sqrt": {
+                        "$add": [
+                            {
+                                "$multiply": ["$X Distance", "$X Distance"]
+                            },
+                            {
+                                "$multiply": ["$Y Distance", "$Y Distance"]
+                            }
+                        ]
+                    }
+                },
+
+                "Altitude Delta": {
+                    "$subtract": ["$Altitude", "$Cell Altitude"]
+                },
+
+                "Azimuth To Station": {
+                    "$subtract": [
+                        {
+                            "$add": [180, {
+                                "$radiansToDegrees": {"$atan2": ["$Y Distance", "$X Distance"]}
+                            }]
+                        },
+                        "$Azimuth"
+                    ]
+                },
+
+                "Height Delta": {
+                    "$subtract": [
+                        "$Altitude", "$Station Absolute Height"
+                    ]
+                },
+
+                "Station Total Downtilt": {
+                    "$add": [
+                        "$Electrical Downtilt", "$Mechanical Downtilt"
+                    ]
+                },
+
+                "Station Downtilt Delta": {
+                    "$subtract": [
+                        "$Electrical Downtilt", "$Mechanical Downtilt"
+                    ]
+                },
+
+                "Vertical Degree": {
+                    "$radiansToDegrees": {"$atan2": [{
+                        "$subtract": [
+                            0, "$Height Delta"
+                        ]
+                    }, "$Distance To Station"]}
+                },
             }
-        },
-        {
-            "$out": "antennas"
+        }, {
+            "$out": "points_agg_new"
         }
     ])
 
 
-if __name__ == "__main__":
-    aggregateAntennas()
+def binIndex(hs, hx):
+    i = int(hx/hs/0.2)
+    return min(5, i)
 
+
+def aggregatePath():
+    total = TRAIN_CONFIG['points']
+    count = 0
+    step = TRAIN_CONFIG['step']
+
+    for p in db.points_agg_new.find():
+        xs = p['Cell X']
+        ys = p['Cell Y']
+        xd = p['X']
+        yd = p['Y']
+
+        xds = xd - xs
+        yds = yd - ys
+
+        hs = p['Station Absolute Height']
+        alt = p['Altitude']
+        a = p['Vertical Degree']
+        ta = math.tan(math.radians(a))
+
+        bins = [0]*6    # 0, 0.2, 0.4, 0.6, 0.8, 1.0(-1.2)
+        bs = max(p['Cell Building Height'], CLUTTER_HEIGHT[int(p['Cell Clutter Index'])]) - p['Altitude Delta']
+        i = binIndex(hs, bs)
+        bins[i] += 1
+
+        bd = max(p['Building Height'], CLUTTER_HEIGHT[int(p['Clutter Index'])])
+        i = binIndex(hs, bd + p['Distance To Station'] * ta)
+        bins[i] += 1
+
+        visited = set()
+        xstep = step if xd > xs else -step
+        for x in range(int(xs)+xstep, int(xd), xstep):
+            y = yds / xds * (x - xs) + ys
+            y = int(y/5)*5
+
+            pt = points.find_one({
+                'X': x,
+                'Y': y
+            })
+            if pt is None:
+                continue
+
+            b = max(pt['Building Height'], CLUTTER_HEIGHT[int(pt['Clutter Index'])]) + pt['Altitude'] - alt
+            i = binIndex(hs, b + distance(pt['X'], pt['Y'], xs, ys) * ta)
+            bins[i] += 1
+
+            visited.add((x, y))
+
+        ystep = step if yd > ys else -step
+        for y in range(int(ys)+ystep, int(yd), ystep):
+            x = xds / yds * (y - ys) + xs
+            x = int(x / 5) * 5
+
+            if (x, y) in visited:
+                continue
+
+            pt = points.find_one({
+                'x': x,
+                'y': y
+            })
+            if pt is None:
+                continue
+
+            b = max(pt['Building Height'], CLUTTER_HEIGHT[int(pt['Clutter Index'])]) + pt['Altitude'] - alt
+            i = binIndex(hs, b + distance(pt['X'], pt['Y'], xs, ys) * ta)
+            bins[i] += 1
+
+        update_list = {f"bin{i}": v for i, v in enumerate(bins)}
+
+        db.points_agg_new.update_one({
+            "_id": p["_id"]
+        }, {
+            "$set": update_list
+        })
+
+        count += 1
+        print(f"Path aggregated: {count}/{total}")
+
+
+def distance(x1, y1, x2, y2):
+    return math.sqrt((x1-x2)**2 + (y1-y2)**2)
+
+
+def delta(alpha, beta):
+    d = beta - alpha
+
+    if d > 180:
+        d -= 360
+    elif d < -180:
+        d += 360
+
+    return d
+
+
+# def findNearestStations(point, threshold=500):
+#     x = point['x']
+#     y = point['y']
+#
+#     docs = stations.find({
+#         "x": {
+#             "$gte": x - threshold,
+#             "$lte": x + threshold
+#         },
+#         "y": {
+#             "$gte": y - threshold,
+#             "$lte": y + threshold,
+#         }
+#     })
+#
+#     if docs.count() < 3:
+#         return findNearestStations(point, 2*threshold)
+#
+#     ants = []
+#     for s in docs:
+#         dis = distance(x, y, s['x'], s['y'])
+#         deg2North = math.degrees(math.acos((x-s['x'])/dis))
+#
+#         minDelta = 180
+#         best = None
+#         for id in s["antennas"]:
+#             a = antennas.find_one({"_id": id})
+#             d = delta(a['azimuth'], deg2North)
+#             if abs(d) <= abs(minDelta):
+#                 minDelta = d
+#                 best = a
+#
+#         ants.append((best, dis))
+#
+#     ants.sort(key=itemgetter(1))
+#
+#     ants = [a for a, _ in ants]
+#     return ants[:3]
+
+
+if __name__ == "__main__":
+    aggregatePath()
 
 
 
